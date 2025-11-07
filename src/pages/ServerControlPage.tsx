@@ -170,6 +170,7 @@ const ServerControlPage: React.FC = () => {
   const { showToast, showConfirm } = useToast();
   const [servers, setServers] = useState<ServerInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false); // 区分初始加载和刷新
   
   // Task 3: 重装系统状态
   const [selectedServer, setSelectedServer] = useState<ServerInfo | null>(null);
@@ -399,8 +400,13 @@ const ServerControlPage: React.FC = () => {
   };
 
   // Task 1: 获取服务器列表（只显示活跃服务器）
-  const fetchServers = async () => {
-    setIsLoading(true);
+  const fetchServers = async (isRefresh = false) => {
+    // 如果是刷新，只设置刷新状态，不改变加载状态
+    if (isRefresh) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     try {
       const response = await api.get('/server-control/list');
       if (response.data.success) {
@@ -425,17 +431,21 @@ const ServerControlPage: React.FC = () => {
         }
         
         const filteredCount = response.data.total - activeServers.length;
-        showToast({ 
-          type: 'success', 
-          title: `已加载 ${activeServers.length} 台活跃服务器` + 
-                 (filteredCount > 0 ? ` (已过滤 ${filteredCount} 台)` : '')
-        });
+        // 只在非刷新时显示成功提示，避免频繁提示
+        if (!isRefresh) {
+          showToast({ 
+            type: 'success', 
+            title: `已加载 ${activeServers.length} 台活跃服务器` + 
+                   (filteredCount > 0 ? ` (已过滤 ${filteredCount} 台)` : '')
+          });
+        }
       }
     } catch (error: any) {
       console.error('获取服务器列表失败:', error);
       showToast({ type: 'error', title: '获取服务器列表失败' });
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -2052,16 +2062,17 @@ const ServerControlPage: React.FC = () => {
             </div>
           </div>
           <button
-            onClick={fetchServers}
-            disabled={isLoading}
+            onClick={() => fetchServers(true)}
+            disabled={isLoading || isRefreshing}
             className="px-3 sm:px-4 py-1.5 sm:py-2 bg-cyber-accent text-white rounded-lg hover:bg-cyber-accent/80 disabled:opacity-50 flex items-center gap-2 transition-all shadow-neon-sm text-xs sm:text-sm">
-            <RefreshCw className={`w-3 h-3 sm:w-4 sm:h-4 ${isLoading ? 'animate-spin' : ''}`} />
-            刷新
+            <RefreshCw className={`w-3 h-3 sm:w-4 sm:h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            {isRefreshing ? '刷新中...' : '刷新'}
           </button>
         </div>
 
         {/* 服务器选择器 */}
-        {isLoading ? (
+        {/* 只在首次加载时显示加载状态，刷新时保留列表 */}
+        {isLoading && servers.length === 0 ? (
           <div className="cyber-card">
             <div className="flex items-center justify-center py-12">
               <RefreshCw className="w-8 h-8 animate-spin text-cyber-accent" />

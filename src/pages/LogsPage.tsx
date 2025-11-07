@@ -17,6 +17,7 @@ const LogsPage = () => {
   const isMobile = useIsMobile();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false); // 区分初始加载和刷新
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [filterLevel, setFilterLevel] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
@@ -25,18 +26,25 @@ const LogsPage = () => {
   const logEndRef = useRef<HTMLDivElement>(null);
 
   // Fetch logs
-  const fetchLogs = async () => {
+  const fetchLogs = async (isRefresh = false) => {
+    // 如果是刷新，只设置刷新状态，不改变加载状态
+    if (isRefresh) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     try {
       const response = await api.get(`/logs`);
       setLogs(response.data);
     } catch (error) {
       console.error("Error fetching logs:", error);
-      if (!isLoading) {
-        // Only show error toast if not initial loading
+      if (!isLoading && !isRefresh) {
+        // Only show error toast if not initial loading or refresh
         toast.error("获取日志失败");
       }
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -45,7 +53,7 @@ const LogsPage = () => {
     try {
       await api.delete(`/logs`);
       toast.success("已清空日志");
-      fetchLogs();
+      fetchLogs(true);
       setShowClearConfirm(false);
     } catch (error) {
       console.error("Error clearing logs:", error);
@@ -65,7 +73,7 @@ const LogsPage = () => {
     
     let interval: NodeJS.Timeout;
     if (autoRefresh) {
-      interval = setInterval(fetchLogs, 5000);
+      interval = setInterval(() => fetchLogs(true), 5000); // 自动刷新使用刷新模式
     }
     
     return () => {
@@ -176,16 +184,17 @@ const LogsPage = () => {
             
             <div className="flex items-center gap-1.5 sm:gap-2">
               <button
-                onClick={() => fetchLogs()}
+                onClick={() => fetchLogs(true)}
                 className="cyber-button text-xs flex items-center justify-center gap-1 px-2 sm:px-3 min-w-[60px] sm:min-w-0"
                 title="刷新日志"
+                disabled={isLoading || isRefreshing}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={isRefreshing ? 'animate-spin' : ''}>
                   <polyline points="1 4 1 10 7 10"></polyline>
                   <polyline points="23 20 23 14 17 14"></polyline>
                   <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path>
                 </svg>
-                <span className="whitespace-nowrap">刷新</span>
+                <span className="whitespace-nowrap">{isRefreshing ? '刷新中...' : '刷新'}</span>
               </button>
               
               <button
@@ -221,7 +230,8 @@ const LogsPage = () => {
           </div>
         </div>
         
-        {isLoading ? (
+        {/* 只在首次加载时显示加载状态，刷新时保留列表 */}
+        {isLoading && logs.length === 0 ? (
           <div className="p-4 animate-pulse space-y-3">
             {[...Array(10)].map((_, i) => (
               <div key={i} className="h-6 bg-cyber-grid/30 rounded"></div>

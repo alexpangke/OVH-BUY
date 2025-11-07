@@ -102,6 +102,7 @@ const ServersPage = () => {
   const [servers, setServers] = useState<ServerPlan[]>([]);
   const [filteredServers, setFilteredServers] = useState<ServerPlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false); // 区分初始加载和刷新
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedDatacenter, setSelectedDatacenter] = useState<string>("all");
   const [datacenters, setDatacenters] = useState<string[]>([]);
@@ -194,7 +195,12 @@ const ServersPage = () => {
     const authState = overrideAuth !== undefined ? overrideAuth : isAuthenticated;
     console.log(`📊 认证状态检查 - overrideAuth: ${overrideAuth}, isAuthenticated: ${isAuthenticated}, 最终使用: ${authState}`);
     
-    setIsLoading(true);
+    // 如果是强制刷新，只设置刷新状态，不改变加载状态
+    if (forceRefresh && servers.length > 0) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     setIsActuallyFetching(true); // 标记开始从API获取
     try {
       console.log(`开始从API获取服务器数据... (forceRefresh: ${forceRefresh}, showApiServers: ${authState})`);
@@ -244,6 +250,8 @@ const ServersPage = () => {
         console.error("无效的服务器列表格式:", serversList);
         toast.error("获取服务器列表失败: 数据格式错误");
         setIsLoading(false);
+        setIsRefreshing(false);
+        setIsActuallyFetching(false);
         return;
       }
       
@@ -306,7 +314,8 @@ const ServersPage = () => {
       //   setFilteredServers(formattedServers);
       // }
       
-      setIsLoading(false); // isLoading 在这里可以先置为false，因为数据已获取并设置
+      setIsLoading(false);
+      setIsRefreshing(false);
       // 更新最后刷新时间
       setLastUpdated(new Date());
       
@@ -342,7 +351,8 @@ const ServersPage = () => {
       toast.error(errorMessage, {
         duration: 6000
       });
-      setIsLoading(false); // 确保isLoading在出错时也更新
+      setIsLoading(false);
+      setIsRefreshing(false);
       
       // 前端缓存已移除，直接从后端获取（后端有缓存）
     } finally {
@@ -1830,16 +1840,16 @@ const ServersPage = () => {
               
               <button
                 onClick={() => fetchServers(true)}
-                disabled={isLoading}
+                disabled={isLoading || isRefreshing}
                 className="px-2 sm:px-3 py-1 sm:py-1.5 bg-cyber-accent/10 hover:bg-cyber-accent/20 text-cyber-accent border border-cyber-accent/30 hover:border-cyber-accent/50 rounded-md transition-all duration-200 text-[10px] sm:text-xs font-medium shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1 sm:gap-1.5 whitespace-nowrap active:scale-95"
                 title="刷新服务器列表"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`${isLoading ? 'animate-spin' : ''} sm:w-3.5 sm:h-3.5 flex-shrink-0`}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`${isRefreshing ? 'animate-spin' : ''} sm:w-3.5 sm:h-3.5 flex-shrink-0`}>
                   <polyline points="1 4 1 10 7 10"></polyline>
                   <polyline points="23 20 23 14 17 14"></polyline>
                   <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path>
                 </svg>
-                <span>刷新</span>
+                <span>{isRefreshing ? '刷新中...' : '刷新'}</span>
               </button>
             </div>
           </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -35,9 +35,12 @@ const OVHAvailabilityPage = () => {
   const isMobile = useIsMobile();
   const [availabilities, setAvailabilities] = useState<AvailabilityItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false); // 区分初始加载和刷新
   const [isConfigLoading, setIsConfigLoading] = useState(true); // 配置加载状态
   const [endpoint, setEndpoint] = useState<string>('');
   const [apiBaseUrl, setApiBaseUrl] = useState<string>('');
+  // 使用ref保存上一次的数据，防止刷新时短暂显示"暂无数据"
+  const prevAvailabilitiesRef = useRef<AvailabilityItem[]>([]);
   
   // 搜索和过滤
   const [searchTerm, setSearchTerm] = useState('');
@@ -82,13 +85,23 @@ const OVHAvailabilityPage = () => {
   };
 
   // 获取所有可用性数据
-  const fetchAvailabilities = useCallback(async () => {
+  const fetchAvailabilities = useCallback(async (isRefresh = false) => {
     if (!apiBaseUrl) return;
     
-    setIsLoading(true);
+    // 如果是刷新且有数据，只设置刷新状态，保留旧数据
+    const hasExistingData = prevAvailabilitiesRef.current.length > 0;
+    if (isRefresh && hasExistingData) {
+      setIsRefreshing(true);
+      // 刷新时不清空数据，保持旧数据可见
+    } else {
+      setIsLoading(true);
+    }
     try {
       const apiUrl = `${apiBaseUrl}/v1/dedicated/server/datacenter/availabilities`;
-      toast.info('正在从 OVH 公开 API 获取数据...', { duration: 2000 });
+      // 只在非刷新时显示提示，避免频繁提示
+      if (!isRefresh) {
+        toast.info('正在从 OVH 公开 API 获取数据...', { duration: 2000 });
+      }
       
       console.log(`正在从 ${apiUrl} 获取数据...`);
       
@@ -98,8 +111,21 @@ const OVHAvailabilityPage = () => {
       });
       
       console.log('OVH API 返回数据:', response.data);
-      setAvailabilities(response.data);
-      toast.success(`成功获取 ${response.data.length} 条可用性记录`);
+      // 先更新状态，确保数据立即可用
+      const newData = Array.isArray(response.data) ? response.data : [];
+      
+      // 保存到ref，用于渲染时的备用检查
+      prevAvailabilitiesRef.current = newData;
+      
+      // 更新数据状态（React会自动批处理状态更新）
+      setAvailabilities(newData);
+      
+      // 只在非刷新时显示成功提示，避免频繁提示
+      if (!isRefresh && newData.length > 0) {
+        toast.success(`成功获取 ${newData.length} 条可用性记录`);
+      } else if (isRefresh && newData.length > 0 && hasExistingData) {
+        // 刷新成功但静默更新，不显示提示
+      }
     } catch (error: any) {
       console.error('获取 OVH 数据失败:', error);
       
@@ -112,7 +138,9 @@ const OVHAvailabilityPage = () => {
       
       toast.error(errorMessage);
     } finally {
+      // 确保加载状态在最后更新
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   }, [apiBaseUrl]);
 
@@ -323,14 +351,14 @@ const OVHAvailabilityPage = () => {
               {!isMobile && '导出JSON'}
             </Button>
             <Button
-              onClick={fetchAvailabilities}
-              disabled={isLoading}
+              onClick={() => fetchAvailabilities(true)}
+              disabled={isLoading || isRefreshing}
               variant="cyber"
               size="sm"
               className="flex items-center gap-2 text-xs sm:text-sm"
             >
-              <RefreshCw className={`w-3 h-3 sm:w-4 sm:h-4 ${isLoading ? 'animate-spin' : ''}`} />
-              {isLoading ? '加载中' : '刷新'}
+              <RefreshCw className={`w-3 h-3 sm:w-4 sm:h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+              {isRefreshing ? '刷新中...' : isLoading ? '加载中' : '刷新'}
             </Button>
           </div>
         </div>
@@ -529,26 +557,30 @@ const OVHAvailabilityPage = () => {
       )}
 
       {/* 数据列表 */}
-      {isLoading ? (
+      {/* 只在首次加载时显示加载状态，刷新时保留列表 */}
+      {isLoading && availabilities.length === 0 && prevAvailabilitiesRef.current.length === 0 ? (
         <div className="flex justify-center items-center h-64">
           <div className="text-center">
             <div className="animate-spin w-10 h-10 border-4 border-cyber-accent border-t-transparent rounded-full mx-auto mb-4"></div>
             <p className="text-cyber-muted">正在获取 OVH 实时数据...</p>
           </div>
         </div>
-      ) : filteredData.length === 0 && availabilities.length === 0 ? (
+      ) : (availabilities.length === 0 && prevAvailabilitiesRef.current.length === 0) && !isRefreshing && !isLoading ? (
+        // 只有在确实没有任何数据（包括ref中的）且不在刷新、不在加载时才显示"暂无数据"
         <div className="cyber-panel p-8 text-center">
           <Database className="w-16 h-16 text-cyber-muted mx-auto mb-4 opacity-50" />
           <p className="text-cyber-muted mb-4">暂无数据</p>
           <p className="text-sm text-slate-500">点击"刷新数据"按钮获取 OVH 最新库存信息</p>
         </div>
-      ) : filteredData.length === 0 ? (
+      ) : filteredData.length === 0 && availabilities.length > 0 ? (
+        // 有数据但过滤后为空，显示"没有匹配的结果"
         <div className="cyber-panel p-8 text-center">
           <Filter className="w-16 h-16 text-cyber-muted mx-auto mb-4 opacity-50" />
           <p className="text-cyber-muted mb-2">没有匹配的结果</p>
           <p className="text-sm text-slate-500">尝试修改搜索或过滤条件</p>
         </div>
-      ) : (
+      ) : filteredData.length > 0 ? (
+        // 有数据时显示列表
         <>
           <div className="space-y-2 sm:space-y-3">
             {paginatedData.map((item, index) => (
@@ -680,7 +712,7 @@ const OVHAvailabilityPage = () => {
             </div>
           )}
         </>
-      )}
+      ) : null}
     </div>
   );
 };

@@ -54,6 +54,7 @@ const QueuePage = () => {
   const { isAuthenticated } = useAPI();
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false); // 区分初始加载和刷新
   const [showAddForm, setShowAddForm] = useState(true); // 默认展开表单
   const [servers, setServers] = useState<ServerPlan[]>([]);
   const [planCodeInput, setPlanCodeInput] = useState<string>("");
@@ -66,8 +67,13 @@ const QueuePage = () => {
   const [showClearConfirm, setShowClearConfirm] = useState(false); // 清空确认对话框
 
   // Fetch queue items
-  const fetchQueueItems = async () => {
-    setIsLoading(true);
+  const fetchQueueItems = async (isRefresh = false) => {
+    // 如果是刷新，只设置刷新状态，不改变加载状态
+    if (isRefresh) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     try {
       const response = await api.get(`/queue`);
       setQueueItems(response.data);
@@ -76,6 +82,7 @@ const QueuePage = () => {
       toast.error("获取队列失败");
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -139,7 +146,7 @@ const QueuePage = () => {
     }
 
     if (successCount > 0 || errorCount === 0) {
-      fetchQueueItems();
+      fetchQueueItems(true);
       setPlanCodeInput("");
       setSelectedDatacenters([]);
       setRetryInterval(TASK_RETRY_INTERVAL);
@@ -154,7 +161,7 @@ const QueuePage = () => {
     try {
       await api.delete(`/queue/${id}`);
       toast.success("已从队列中移除");
-      fetchQueueItems();
+      fetchQueueItems(true);
     } catch (error) {
       console.error("Error removing queue item:", error);
       toast.error("从队列中移除失败");
@@ -187,7 +194,7 @@ const QueuePage = () => {
       });
       
       toast.success(`已${actionText}队列项`);
-      fetchQueueItems();
+      fetchQueueItems(true);
     } catch (error) {
       console.error("Error updating queue item status:", error);
       toast.error("更新队列项状态失败");
@@ -199,7 +206,7 @@ const QueuePage = () => {
     try {
       const response = await api.delete(`/queue/clear`);
       toast.success(`已清空队列（共 ${response.data.count} 项）`);
-      fetchQueueItems();
+      fetchQueueItems(true);
       setShowClearConfirm(false);
     } catch (error) {
       console.error("Error clearing queue:", error);
@@ -287,12 +294,12 @@ const QueuePage = () => {
       {/* Controls */}
       <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 mb-4 sm:mb-6">
         <button
-          onClick={() => fetchQueueItems()}
+          onClick={() => fetchQueueItems(true)}
           className="cyber-button text-xs flex items-center justify-center"
-          disabled={isLoading}
+          disabled={isLoading || isRefreshing}
         >
-          <RefreshCwIcon size={12} className="mr-1" />
-          刷新
+          <RefreshCwIcon size={12} className={`mr-1 ${isRefreshing ? 'animate-spin' : ''}`} />
+          {isRefreshing ? '刷新中...' : '刷新'}
         </button>
         <button
           onClick={() => setShowClearConfirm(true)}
@@ -514,7 +521,15 @@ const QueuePage = () => {
 
       {/* Queue List */}
       <div>
-        <div className="space-y-3">
+        {/* 只在首次加载时显示加载状态，刷新时保留列表 */}
+        {isLoading && queueItems.length === 0 ? (
+          <div className="cyber-card">
+            <div className="flex items-center justify-center py-12">
+              <RefreshCwIcon className="w-8 h-8 animate-spin text-cyber-accent" />
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
             {queueItems.map(item => (
               <div 
                 key={item.id}
@@ -574,7 +589,8 @@ const QueuePage = () => {
                 </div>
               </div>
             ))}
-        </div>
+          </div>
+        )}
       </div>
       
       {/* 确认清空对话框 */}

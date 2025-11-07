@@ -26,14 +26,20 @@ const HistoryPage = () => {
   const isMobile = useIsMobile();
   const [history, setHistory] = useState<PurchaseHistory[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false); // 区分初始加载和刷新
   const [filterStatus, setFilterStatus] = useState<"all" | "success" | "failed">("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [filteredHistory, setFilteredHistory] = useState<PurchaseHistory[]>([]);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   // Fetch purchase history
-  const fetchHistory = async () => {
-    setIsLoading(true);
+  const fetchHistory = async (isRefresh = false) => {
+    // 如果是刷新，只设置刷新状态，不改变加载状态
+    if (isRefresh) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     try {
       const response = await api.get(`/purchase-history`);
       setHistory(response.data);
@@ -43,6 +49,7 @@ const HistoryPage = () => {
       toast.error("获取购买历史记录失败");
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -51,7 +58,7 @@ const HistoryPage = () => {
     try {
       await api.delete(`/purchase-history`);
       toast.success("已清空购买历史记录");
-      fetchHistory();
+      fetchHistory(true);
       setShowClearConfirm(false);
     } catch (error) {
       console.error("Error clearing purchase history:", error);
@@ -134,16 +141,16 @@ const HistoryPage = () => {
           
           <div className="flex items-center justify-end space-x-2">
             <button
-              onClick={() => fetchHistory()}
+              onClick={() => fetchHistory(true)}
               className="cyber-button text-xs flex items-center"
-              disabled={isLoading}
+              disabled={isLoading || isRefreshing}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-1">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`mr-1 ${isRefreshing ? 'animate-spin' : ''}`}>
                 <polyline points="1 4 1 10 7 10"></polyline>
                 <polyline points="23 20 23 14 17 14"></polyline>
                 <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path>
               </svg>
-              刷新
+              {isRefreshing ? '刷新中...' : '刷新'}
             </button>
             
             <button
@@ -163,7 +170,8 @@ const HistoryPage = () => {
 
       {/* History List */}
       <div className="cyber-panel overflow-hidden">
-        {isLoading ? (
+        {/* 只在首次加载时显示加载状态，刷新时保留列表 */}
+        {isLoading && history.length === 0 ? (
           <div className="animate-pulse p-4">
             <div className="h-8 bg-cyber-grid/30 rounded mb-4"></div>
             <div className="space-y-3">
