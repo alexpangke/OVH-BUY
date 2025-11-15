@@ -14,6 +14,7 @@ interface Subscription {
   notifyAvailable: boolean;
   notifyUnavailable: boolean;
   autoOrder?: boolean;
+  quantity?: number;  // 自动下单数量
   lastStatus: Record<string, string>;
   createdAt: string;
 }
@@ -62,8 +63,9 @@ const MonitorPage = () => {
     planCode: '',
     datacenters: '',
     notifyAvailable: true,
-  notifyUnavailable: false,
-  autoOrder: false
+    notifyUnavailable: false,
+    autoOrder: false,
+    quantity: 1  // 自动下单数量，默认为1
   });
 
   // 加载订阅列表
@@ -137,7 +139,8 @@ const MonitorPage = () => {
         datacenters: datacenters.length > 0 ? datacenters : [],
         notifyAvailable: formData.notifyAvailable,
         notifyUnavailable: formData.notifyUnavailable,
-        autoOrder: formData.autoOrder
+        autoOrder: formData.autoOrder,
+        quantity: formData.autoOrder ? (formData.quantity || 1) : undefined
       });
       
       toast.success(`已订阅 ${formData.planCode}`);
@@ -146,7 +149,8 @@ const MonitorPage = () => {
         datacenters: '',
         notifyAvailable: true,
         notifyUnavailable: false,
-        autoOrder: false
+        autoOrder: false,
+        quantity: 1
       });
       setShowAddForm(false);
       loadSubscriptions(true);
@@ -374,34 +378,74 @@ const MonitorPage = () => {
                   className="cyber-input w-full"
                 />
               </div>
-              <div className="flex gap-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={formData.notifyAvailable}
-                    onChange={(e) => setFormData({...formData, notifyAvailable: e.target.checked})}
-                    className="cyber-checkbox"
-                  />
-                  <span className="text-sm">有货时提醒</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={formData.notifyUnavailable}
-                    onChange={(e) => setFormData({...formData, notifyUnavailable: e.target.checked})}
-                    className="cyber-checkbox"
-                  />
-                  <span className="text-sm">无货时提醒</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={formData.autoOrder}
-                    onChange={(e) => setFormData({...formData, autoOrder: e.target.checked})}
-                    className="cyber-checkbox"
-                  />
-                  <span className="text-sm">有货自动下单</span>
-                </label>
+              <div className="flex flex-col gap-3">
+                <div className="flex gap-4 flex-wrap">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.notifyAvailable}
+                      onChange={(e) => setFormData({...formData, notifyAvailable: e.target.checked})}
+                      className="cyber-checkbox"
+                    />
+                    <span className="text-sm">有货时提醒</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.notifyUnavailable}
+                      onChange={(e) => setFormData({...formData, notifyUnavailable: e.target.checked})}
+                      className="cyber-checkbox"
+                    />
+                    <span className="text-sm">无货时提醒</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.autoOrder}
+                      onChange={(e) => setFormData({...formData, autoOrder: e.target.checked})}
+                      className="cyber-checkbox"
+                    />
+                    <span className="text-sm">有货自动下单</span>
+                  </label>
+                </div>
+                {formData.autoOrder && (
+                  <div>
+                    <label className="block text-sm text-cyber-muted mb-1">
+                      下单数量
+                      <span className="text-xs text-cyber-muted ml-2">
+                        (检测出的配置数量 × 可用数据中心 × 数量 = 总下单量)
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      value={String(formData.quantity || 1)}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === '' || /^\d*$/.test(value)) {
+                          const numValue = Number(value);
+                          if (value === '' || (numValue > 0 && numValue <= 100)) {
+                            setFormData({...formData, quantity: value === '' ? 1 : numValue});
+                          }
+                        }
+                      }}
+                      onBlur={(e) => {
+                        const value = Number(e.target.value);
+                        if (isNaN(value) || value < 1) {
+                          setFormData({...formData, quantity: 1});
+                        } else if (value > 100) {
+                          setFormData({...formData, quantity: 100});
+                        } else {
+                          setFormData({...formData, quantity: value});
+                        }
+                      }}
+                      className="cyber-input w-full max-w-xs"
+                      placeholder="默认: 1"
+                    />
+                    <p className="text-xs text-cyber-muted mt-1">
+                      💡 例如：检测到2个配置，3个数据中心有货，数量填5，将创建 2×3×5=30 个订单
+                    </p>
+                  </div>
+                )}
               </div>
               <div className="flex gap-3">
                 <button 
@@ -476,7 +520,7 @@ const MonitorPage = () => {
                       )}
                       {sub.autoOrder && (
                         <span className="text-xs px-2 py-0.5 bg-cyber-accent/20 text-cyber-accent rounded">
-                          自动下单
+                          自动下单{sub.quantity && sub.quantity > 1 ? ` (数量: ${sub.quantity})` : ''}
                         </span>
                       )}
                     </div>

@@ -70,7 +70,7 @@ class ServerMonitor:
             # 兼容无zoneinfo环境：使用UTC+8近似
             return datetime.utcnow() + timedelta(hours=8)
     
-    def add_subscription(self, plan_code, datacenters=None, notify_available=True, notify_unavailable=False, server_name=None, last_status=None, history=None, auto_order=False):
+    def add_subscription(self, plan_code, datacenters=None, notify_available=True, notify_unavailable=False, server_name=None, last_status=None, history=None, auto_order=False, quantity=1):
         """
         添加服务器订阅
         
@@ -82,6 +82,8 @@ class ServerMonitor:
             server_name: 服务器友好名称（如"KS-2 | Intel Xeon-D 1540"）
             last_status: 上次检查的状态字典（用于恢复，避免重复通知）
             history: 历史记录列表（用于恢复）
+            auto_order: 是否自动下单
+            quantity: 自动下单数量（每个配置×每个数据中心的数量）
         """
         # 检查是否已存在
         existing = next((s for s in self.subscriptions if s["planCode"] == plan_code), None)
@@ -90,8 +92,13 @@ class ServerMonitor:
             existing["datacenters"] = datacenters or []
             existing["notifyAvailable"] = notify_available
             existing["notifyUnavailable"] = notify_unavailable
-            # 更新自动下单标记
+            # 更新自动下单标记和数量
             existing["autoOrder"] = bool(auto_order)
+            if auto_order:
+                existing["quantity"] = max(1, int(quantity)) if quantity else 1
+            elif "quantity" in existing:
+                # 如果关闭自动下单，移除数量字段
+                existing.pop("quantity", None)
             # 更新服务器名称（总是更新，即使为None也要更新）
             existing["serverName"] = server_name
             # 确保历史记录字段存在
@@ -109,9 +116,10 @@ class ServerMonitor:
             "createdAt": datetime.now().isoformat(),
             "history": history if history is not None else []  # 恢复历史记录或初始化为空
         }
-        # 自动下单标记
+        # 自动下单标记和数量
         if auto_order:
             subscription["autoOrder"] = True
+            subscription["quantity"] = max(1, int(quantity)) if quantity else 1
         
         # 添加服务器名称（如果提供）
         if server_name:
@@ -319,31 +327,61 @@ class ServerMonitor:
                     available_notifications = [n for n in notifications_to_send if n["change_type"] == "available"]
                     unavailable_notifications = [n for n in notifications_to_send if n["change_type"] == "unavailable"]
                     
+                    # 过滤出需要下单的通知：只有从无货变有货或首次检查有货的情况才下单
+                    # 持续有货的情况不重复下单
+                    order_notifications = [
+                        n for n in available_notifications 
+                        if n.get("old_status") in [None, "unavailable"]  # 首次检查有货 或 从无货变有货
+                    ]
+                    
                     # 在发送有货通知之前，优先尝试下单（仅当订阅开启 autoOrder）
-                    if available_notifications and subscription.get("autoOrder"):
+                    # 只对从无货变有货的情况下单，持续有货不重复下单
+                    if order_notifications and subscription.get("autoOrder"):
                         try:
                             import requests
                             from api_key_config import API_SECRET_KEY
-                            for notif in available_notifications:
+                            quantity = subscription.get("quantity", 1)  # 获取下单数量，默认为1
+                            
+                            # 计算总订单数：配置数量（1个配置）× 数据中心数量 × 数量
+                            total_orders = len(order_notifications) * quantity
+                            self.add_log("INFO", f"[monitor->order] 开始批量下单: {plan_code}, 配置数=1, 数据中心数={len(order_notifications)}, 数量={quantity}, 总订单数={total_orders}", "monitor")
+                            self.add_log("INFO", f"[monitor->order] 下单条件：仅对从无货变有货的情况下单（过滤掉持续有货的情况）", "monitor")
+                            
+                            success_count = 0
+                            fail_count = 0
+                            
+                            for notif in order_notifications:
                                 dc_to_order = notif["dc"]
                                 # 使用配置级 options（若存在），否则留空让后端自动匹配
                                 order_options = (config_info.get("options") if config_info else []) or []
-                                payload = {
-                                    "planCode": plan_code,
-                                    "datacenter": dc_to_order,
-                                    "options": order_options
-                                }
-                                headers = {"X-API-Key": API_SECRET_KEY}
-                                api_url = "http://127.0.0.1:19998/api/config-sniper/quick-order"
-                                self.add_log("INFO", f"[monitor->order] 尝试快速下单: {plan_code}@{dc_to_order}, options={order_options}", "monitor")
-                                try:
-                                    resp = requests.post(api_url, json=payload, headers=headers, timeout=30)
-                                    if resp.status_code == 200:
-                                        self.add_log("INFO", f"[monitor->order] 快速下单成功: {plan_code}@{dc_to_order}", "monitor")
-                                    else:
-                                        self.add_log("WARNING", f"[monitor->order] 快速下单失败({resp.status_code}): {resp.text}", "monitor")
-                                except requests.exceptions.RequestException as e:
-                                    self.add_log("WARNING", f"[monitor->order] 快速下单请求异常: {str(e)}", "monitor")
+                                
+                                # 为每个数据中心创建 quantity 个订单
+                                for i in range(quantity):
+                                    payload = {
+                                        "planCode": plan_code,
+                                        "datacenter": dc_to_order,
+                                        "options": order_options,
+                                        "fromMonitor": True,  # 标记来自监控，绕过2分钟限制
+                                        "skipDuplicateCheck": True  # 跳过重复检查，允许批量下单
+                                    }
+                                    headers = {"X-API-Key": API_SECRET_KEY}
+                                    api_url = "http://127.0.0.1:19998/api/config-sniper/quick-order"
+                                    
+                                    order_num = i + 1
+                                    self.add_log("INFO", f"[monitor->order] 尝试快速下单 ({order_num}/{quantity}): {plan_code}@{dc_to_order}, options={order_options}", "monitor")
+                                    try:
+                                        resp = requests.post(api_url, json=payload, headers=headers, timeout=30)
+                                        if resp.status_code == 200:
+                                            success_count += 1
+                                            self.add_log("INFO", f"[monitor->order] 快速下单成功 ({order_num}/{quantity}): {plan_code}@{dc_to_order}", "monitor")
+                                        else:
+                                            fail_count += 1
+                                            self.add_log("WARNING", f"[monitor->order] 快速下单失败 ({order_num}/{quantity}, {resp.status_code}): {resp.text}", "monitor")
+                                    except requests.exceptions.RequestException as e:
+                                        fail_count += 1
+                                        self.add_log("WARNING", f"[monitor->order] 快速下单请求异常 ({order_num}/{quantity}): {str(e)}", "monitor")
+                            
+                            self.add_log("INFO", f"[monitor->order] 批量下单完成: 成功={success_count}, 失败={fail_count}, 总计={total_orders}", "monitor")
                         except Exception as e:
                             # ✅ 统一错误处理：记录详细异常信息
                             self.add_log("WARNING", f"[monitor->order] 下单前置流程异常: {str(e)}", "monitor")
