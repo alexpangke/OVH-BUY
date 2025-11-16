@@ -1064,7 +1064,6 @@ class ServerMonitor:
                     f"\n状态: 可用性显示有货\n"
                     f"时间: {self._now_beijing().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
                     f"⚠️ 特别说明：\n"
-                    f"可用性有货，暂无价格，故未下单\n"
                     f"（价格校验未通过，已跳过自动下单）"
                 )
             else:
